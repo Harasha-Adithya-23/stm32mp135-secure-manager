@@ -4,11 +4,18 @@ SECTIONS
 {
 	. = 0xC2000000;
 
-	.text :
-	{
-		*(.text*)
-	}	
+    .reset : {
+        *(.reset)
+    }
 
+    .text : {
+        *(.text*)
+    }
+
+    .rodata : {
+        *(.rodata*)
+    }
+    
 	.data :
 	{
 		*(.data*)
