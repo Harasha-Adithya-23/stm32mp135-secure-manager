@@ -73,6 +73,46 @@ static void echo(void)
     printf("TA echoed: %s\n", output);
 }
 
+static void hashTest(void)
+{
+    char input[20];
+    char hash[32];
+
+    printf("Enter word: ");
+    scanf("%19s", input);
+
+    memset(&op, 0, sizeof(op));
+    op.paramTypes = TEEC_PARAM_TYPES(
+        TEEC_MEMREF_TEMP_INPUT,
+        TEEC_MEMREF_TEMP_OUTPUT,
+        TEEC_NONE,
+        TEEC_NONE);
+
+    op.params[0].tmpref.buffer = input;
+    op.params[0].tmpref.size = strlen(input) + 1;
+    op.params[1].tmpref.buffer = hash;
+    op.params[1].tmpref.size = sizeof(hash);
+
+    res = TEEC_InvokeCommand(&sess, CMD_HASH, &op, &origin);
+    if (res != TEEC_SUCCESS){
+    	printf("hash failed 0x%x\n" , res);
+    }
+
+    printf("hash returned\n");
+
+    printf("SHA256: ");
+
+    for(int i = 0; i < 32; i++)
+    {
+        printf("%02x", hash[i]);
+    }
+
+    printf("\n");
+
+    
+        	
+}
+
 static void stop(void)
 {
     TEEC_CloseSession(&sess);
@@ -87,6 +127,7 @@ int main(void)
 
     get_version();
     echo();
+    hashTest();
 
     stop();
     return 0;
