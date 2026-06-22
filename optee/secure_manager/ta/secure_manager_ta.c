@@ -5,6 +5,16 @@
 
 #include "secure_manager_ta.h"
 
+
+
+typedef struct
+{
+    TEE_OperationHandle hash_operation;
+
+} session_data;
+
+
+
 /*
  * Called when the instance of the TA is created. This is the first call in
  * the TA.
@@ -31,7 +41,17 @@ TEE_Result TA_OpenSessionEntryPoint(uint32_t ptype,
                                     void **session_id_ptr)
 {
     /* Check client identity, and alloc/init some session resources if any */
-    
+
+    session_data *sess;
+
+    sess = TEE_Malloc(sizeof(session_data) , 0);   // TEE given malloc and 0 tells to initalize with 0's
+
+    if(sess == NULL)
+    	return TEE_ERROR_OUT_OF_MEMORY;
+
+    sess->hash_operation = TEE_HANDLE_NULL;   //safe-initalization
+ 
+   *session_id_ptr = sess;                   // adds sess to the optee tracking table
 	
     /* Return with a status */
     return TEE_SUCCESS;
@@ -40,7 +60,15 @@ TEE_Result TA_OpenSessionEntryPoint(uint32_t ptype,
 void TA_CloseSessionEntryPoint(void *sess_ptr)
 {
     /* check client and handle session resource release, if any */
-    
+
+    session_data *sess  = sess_ptr;
+
+    if(sess->hash_operation != TEE_SUCCESS)   // if not success meant used for a hash and needs to be deallocated
+    {
+    	TEE_FreeOperation(sess->hash_operation);
+    }
+
+    TEE_Free(sess);
 }
 
 
@@ -138,6 +166,73 @@ static TEE_Result hash(uint32_t parameters_type , TEE_Param parameters[4])
 	return TEE_SUCCESS;
 }
 
+static TEE_Result hash_start(session_data *sess)
+{
+	if(sess->hash_operation != TEE_HANDLE_NULL)
+	{
+		TEE_FreeOperation(sess->hash_operation);
+	}
+
+	return TEE_AllocateOperation(
+		&sess->hash_operation,
+		TEE_ALG_SHA256,
+		TEE_MODE_DIGEST,
+		0
+	);
+}
+
+static TEE_Result hash_update(session_data *sess , uint32_t parameters_type ,TEE_Param parameters[4])
+{
+	uint32_t expected = TEE_PARAM_TYPES(
+						TEE_PARAM_TYPE_MEMREF_INPUT,
+						TEE_PARAM_TYPE_NONE,
+						TEE_PARAM_TYPE_NONE,
+						TEE_PARAM_TYPE_NONE
+						);
+
+	if (parameters_type != expected)
+	{
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	TEE_DigestUpdate(
+		sess->hash_operation,
+		parameters[0].memref.buffer,
+		parameters[0].memref.size
+	);
+
+	return TEE_SUCCESS;
+	
+}
+
+static TEE_Result hash_close( session_data *sess , uint32_t parameters_type ,TEE_Param parameters[4])
+{
+	uint32_t expected = TEE_PARAM_TYPES(
+							TEE_PARAM_TYPE_MEMREF_OUTPUT,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE
+						);
+
+	if (parameters_type != expected)
+	{
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	uint32_t hash_size = 32;
+
+	TEE_DigestDoFinal(
+		sess->hash_operation,							   //  op
+		NULL,                          //  data: NULL because data already sent via digest update
+		0,
+		parameters[0].memref.buffer,
+		&hash_size
+	);                      // Finish hashing and get the result
+
+	return TEE_SUCCESS;
+	
+}
+
 
 TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
                                       uint32_t cmd_id,
@@ -145,6 +240,8 @@ TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
                                       TEE_Param parameters[4])
 {
     /* Decode the command and process execution of the target service */
+
+    session_data *sess = (session_data *)session_id;
 
     switch(cmd_id)
     {
@@ -156,6 +253,15 @@ TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
 
     	case CMD_HASH:
     		return hash(parameters_type , parameters);
+
+    	case CMD_HASH_START:
+    		return hash_start( sess);
+
+    	case CMD_HASH_UPDATE:
+    		return hash_update(sess , parameters_type , parameters);
+
+    	case CMD_HASH_CLOSE:
+    		return hash_close(sess , parameters_type , parameters);
 
     	default:
     		return TEE_ERROR_BAD_PARAMETERS;

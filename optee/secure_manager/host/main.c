@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <tee_client_api.h>
 #include "../ta/include/secure_manager_ta.h"
 
@@ -113,6 +114,102 @@ static void hashTest(void)
         	
 }
 
+static void hashFile()
+{
+   FILE *fp;
+
+    unsigned char buffer[4096];                                     // 512 * 8
+    unsigned char hash[32];                                         // 32 -  hash length
+
+    fp = fopen("test.bin","rb");
+
+    if(fp == NULL)
+    {
+        printf("file open failed\n");
+        return;
+    }
+
+    memset(&op,0,sizeof(op));
+
+    op.paramTypes = TEEC_PARAM_TYPES(
+    						TEEC_NONE,
+    						TEEC_NONE,
+    						TEEC_NONE,
+    						TEEC_NONE
+    				);
+
+    res = TEEC_InvokeCommand(&sess , CMD_HASH_START , &op , &origin);
+
+    if (res != TEEC_SUCCESS)
+    {
+    	printf("hash start failed\n");
+    	fclose(fp);
+    	return;
+    }
+
+    while(1)
+    {
+    	int n = fread(buffer,1,sizeof(buffer),fp);  // n has number of bytes read
+
+    	if(n <= 0)
+    	{
+    		break;
+    	}
+
+    	memset(&op,0,sizeof(op));
+
+    	op.paramTypes = TEEC_PARAM_TYPES(
+    						TEEC_MEMREF_TEMP_INPUT,
+    						TEEC_NONE,
+    						TEEC_NONE,
+    						TEEC_NONE
+    					);
+
+    	op.params[0].tmpref.buffer = buffer;
+    	op.params[0].tmpref.size  = n;
+
+    	res = TEEC_InvokeCommand(&sess , CMD_HASH_UPDATE , &op , &origin);
+
+    	if (res != TEEC_SUCCESS)
+    	{
+    		printf("Update Failed");
+    		fclose(fp);
+    		return;
+    	}
+    }
+
+
+    memset(&op,0,sizeof(op));
+
+    op.paramTypes = TEEC_PARAM_TYPES(
+    					TEEC_MEMREF_TEMP_OUTPUT,
+    					TEEC_NONE,
+    					TEEC_NONE,
+    					TEEC_NONE
+    				);
+
+    op.params[0].tmpref.buffer = hash;
+    op.params[0].tmpref.size   = sizeof(hash);
+
+    res = TEEC_InvokeCommand(&sess , CMD_HASH_CLOSE , &op , &origin);
+	if (res != TEEC_SUCCESS)
+	{
+		printf("Hash Failed");
+		fclose(fp);
+		return;
+	}
+
+	fclose(fp);
+
+	printf("SHA256: ");
+
+	for(int i=0;i<32;i++)
+	    printf("%02x",hash[i]);
+
+	printf("\n");
+    
+}
+
 static void stop(void)
 {
     TEEC_CloseSession(&sess);
@@ -125,9 +222,11 @@ int main(void)
     start();
     if (res != TEEC_SUCCESS) return 1;
 
+
     get_version();
     echo();
     hashTest();
+    hashFile();
 
     stop();
     return 0;

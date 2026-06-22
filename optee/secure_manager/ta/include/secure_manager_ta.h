@@ -8,5 +8,8 @@
 #define CMD_GET_VERSION 0
 #define CMD_ECHO 1  
 #define CMD_HASH 2     
+#define CMD_HASH_START 3
+#define CMD_HASH_UPDATE 4
+#define CMD_HASH_CLOSE 5
 
 #endif
