@@ -58,6 +58,30 @@ static TEE_Result get_version(uint32_t parameters_type,TEE_Param parameters[4])
 	return TEE_SUCCESS;
 }
 
+static TEE_Result echo(uint32_t parameters_type, TEE_Param parameters[4])
+{
+    uint32_t expected = TEE_PARAM_TYPES(
+        TEE_PARAM_TYPE_MEMREF_INPUT,
+        TEE_PARAM_TYPE_MEMREF_OUTPUT,
+        TEE_PARAM_TYPE_NONE,
+        TEE_PARAM_TYPE_NONE);
+
+    if (parameters_type != expected)
+        return TEE_ERROR_BAD_PARAMETERS;
+
+    char *input = parameters[0].memref.buffer;
+    char *output = parameters[1].memref.buffer;
+    uint32_t size = parameters[0].memref.size;
+
+    if (parameters[1].memref.size < size)
+        return TEE_ERROR_SHORT_BUFFER;
+
+    TEE_MemMove(output, input, size);
+    parameters[1].memref.size = size;
+
+    return TEE_SUCCESS;
+}
+
 TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
                                       uint32_t cmd_id,
                                       uint32_t parameters_type,
@@ -69,6 +93,9 @@ TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
     {
     	case CMD_GET_VERSION:
     		return get_version(parameters_type,parameters);
+
+    	case CMD_ECHO:
+    	    return echo(parameters_type, parameters);
 
     	default:
     		return TEE_ERROR_BAD_PARAMETERS;
