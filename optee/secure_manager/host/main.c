@@ -11,6 +11,10 @@ static TEEC_Result res;
 static uint32_t origin;
 static TEEC_Operation op;
 
+
+static unsigned char hash[32];                                         // 32 -  hash length
+
+
 static void start(void)
 {
     res = TEEC_InitializeContext(NULL, &ctx);                 //connects linux to optee
@@ -119,7 +123,6 @@ static void hashFile()
    FILE *fp;
 
     unsigned char buffer[4096];                                     // 512 * 8
-    unsigned char hash[32];                                         // 32 -  hash length
 
     fp = fopen("test.bin","rb");
 
@@ -210,6 +213,58 @@ static void hashFile()
     
 }
 
+static void verifyFile()
+{
+	uint8_t sig[256];                                              // RSA-2048 --> 2048/8 = 256
+
+	FILE *fp;
+
+	fp = fopen("test.sig","rb");
+
+	if (fp == NULL)
+	{
+		printf("Signature not opened\n");
+		return;
+	}
+
+	memset(&op,0,sizeof(op));
+
+	op.paramTypes = TEEC_PARAM_TYPES(
+					TEEC_MEMREF_TEMP_INPUT,
+					TEEC_MEMREF_TEMP_INPUT,
+					TEEC_NONE,
+					TEEC_NONE
+					);
+
+	size_t n = fread(sig,1,sizeof(sig),fp);
+
+	if (n <= 0 )
+	{
+		printf("No signature found\n");
+		fclose(fp);
+		return;
+	}
+
+	op.params[0].tmpref.buffer = hash;
+	op.params[0].tmpref.size   = sizeof(hash);
+
+	op.params[1].tmpref.buffer = sig;
+	op.params[1].tmpref.size   = n;
+
+	res = TEEC_InvokeCommand(&sess , CMD_VERIFY_FILE , &op , &origin);
+
+	if (res != TEEC_SUCCESS)
+	{
+		printf("Not verified\n");
+		fclose(fp);
+		return;
+	}
+
+	printf("OK Verified\n");
+	fclose(fp);
+	return;
+}
+
 static void stop(void)
 {
     TEEC_CloseSession(&sess);
@@ -227,6 +282,8 @@ int main(void)
     echo();
     hashTest();
     hashFile();
+
+    verifyFile();
 
     stop();
     return 0;

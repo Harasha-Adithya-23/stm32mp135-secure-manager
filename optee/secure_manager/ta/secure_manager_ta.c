@@ -5,13 +5,20 @@
 
 #include "secure_manager_ta.h"
 
+#include "public_key.h"
+
 
 
 typedef struct
 {
     TEE_OperationHandle hash_operation;
 
+    TEE_OperationHandle verify_operation;
+
+    TEE_ObjectHandle public_key;
+
 } session_data;
+
 
 
 
@@ -36,6 +43,43 @@ void TA_DestroyEntryPoint(void)
 	DMSG("has been called");
 }
 
+
+static TEE_Result load_public_key(session_data *sess)
+{
+    TEE_Result res;
+
+    TEE_Attribute attrs[2];
+
+
+    res = TEE_AllocateTransientObject(
+            TEE_TYPE_RSA_PUBLIC_KEY,
+            2048,
+            &sess->public_key);
+
+    if(res != TEE_SUCCESS)
+        return res;
+
+
+    TEE_InitRefAttribute(
+        &attrs[0],
+        TEE_ATTR_RSA_MODULUS,
+        rsa_n,
+        sizeof(rsa_n));
+
+
+    TEE_InitRefAttribute(
+        &attrs[1],
+        TEE_ATTR_RSA_PUBLIC_EXPONENT,
+        rsa_e,
+        sizeof(rsa_e));
+
+
+    return TEE_PopulateTransientObject(
+            sess->public_key,
+            attrs,
+            2);
+}
+
 TEE_Result TA_OpenSessionEntryPoint(uint32_t ptype,
                                     TEE_Param param[4],
                                     void **session_id_ptr)
@@ -44,12 +88,15 @@ TEE_Result TA_OpenSessionEntryPoint(uint32_t ptype,
 
     session_data *sess;
 
-    sess = TEE_Malloc(sizeof(session_data) , 0);   // TEE given malloc and 0 tells to initalize with 0's
+    sess = TEE_Malloc(sizeof(session_data) , 0);   // TEE given malloc and 0 tells flag set to 0 i.e if memory contents are undefined
 
     if(sess == NULL)
     	return TEE_ERROR_OUT_OF_MEMORY;
 
     sess->hash_operation = TEE_HANDLE_NULL;   //safe-initalization
+    sess->verify_operation = TEE_HANDLE_NULL;
+
+    sess->public_key = TEE_HANDLE_NULL;
  
    *session_id_ptr = sess;                   // adds sess to the optee tracking table
 	
@@ -63,10 +110,16 @@ void TA_CloseSessionEntryPoint(void *sess_ptr)
 
     session_data *sess  = sess_ptr;
 
-    if(sess->hash_operation != TEE_SUCCESS)   // if not success meant used for a hash and needs to be deallocated
+    if(sess->hash_operation != TEE_HANDLE_NULL)   // if not success meant used for a hash and needs to be deallocated
     {
     	TEE_FreeOperation(sess->hash_operation);
     }
+
+    if(sess->verify_operation != TEE_HANDLE_NULL)
+        TEE_FreeOperation(sess->verify_operation);
+
+       if(sess->public_key != TEE_HANDLE_NULL)
+       	TEE_FreeTransientObject(sess->public_key);
 
     TEE_Free(sess);
 }
@@ -234,6 +287,75 @@ static TEE_Result hash_close( session_data *sess , uint32_t parameters_type ,TEE
 }
 
 
+static TEE_Result verify (session_data *sess , uint32_t parameters_type , TEE_Param parameters[4])
+{
+	TEE_Result res;
+
+	uint32_t expected = TEE_PARAM_TYPES(
+							TEE_PARAM_TYPE_MEMREF_INPUT,        // DIGEST / HASH
+							TEE_PARAM_TYPE_MEMREF_INPUT,        // Signature
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE
+						);
+
+	if (parameters_type != expected)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+
+	// Allocate RSA verify operation
+
+	res = TEE_AllocateOperation(
+			&sess->verify_operation,
+			TEE_ALG_RSASSA_PKCS1_V1_5_SHA256,				// RSA ALGORITHM 
+			TEE_MODE_VERIFY,								// - 	MODE : VERIFY
+			2048											// RSA-2048
+		  );
+
+	if(res != TEE_SUCCESS)
+	{
+		return res;
+	}
+
+	res = load_public_key(sess);
+
+	if(res != TEE_SUCCESS)
+	    return res;
+
+
+	res = TEE_SetOperationKey(
+	    	sess->verify_operation,
+	    	sess->public_key);
+
+	if(res != TEE_SUCCESS)
+		return res;
+	
+
+	/*
+		TEE-AssymmetricVerifyDIgest need sha256 not directly in .pem format 
+	*/
+
+
+	res = TEE_AsymmetricVerifyDigest(
+			sess->verify_operation,
+			NULL,
+			0,
+			parameters[0].memref.buffer,                     // digest
+			parameters[0].memref.size,						 // digest-size
+			parameters[1].memref.buffer,					 // signature
+			parameters[1].memref.size 						 // signature size
+		  );
+
+	if (res != TEE_SUCCESS)
+	{
+		return TEE_ERROR_SIGNATURE_INVALID;
+	}
+
+	return TEE_SUCCESS;
+
+						
+}
+
+
 TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
                                       uint32_t cmd_id,
                                       uint32_t parameters_type,
@@ -262,6 +384,11 @@ TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
 
     	case CMD_HASH_CLOSE:
     		return hash_close(sess , parameters_type , parameters);
+
+    	case CMD_VERIFY_FILE:
+    		return verify(sess , parameters_type , parameters);
+
+
 
     	default:
     		return TEE_ERROR_BAD_PARAMETERS;
