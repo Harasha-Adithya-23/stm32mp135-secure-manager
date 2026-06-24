@@ -11,8 +11,10 @@ static TEEC_Result res;
 static uint32_t origin;
 static TEEC_Operation op;
 
+#define HASH_SIZE 32
+#define SIG_SIZE  256
 
-static unsigned char hash[32];                                         // 32 -  hash length
+static unsigned char hash[HASH_SIZE];
 
 
 static void start(void)
@@ -118,151 +120,175 @@ static void hashTest(void)
         	
 }
 
-static void hashFile()
+static void hashFile(const char *filename)
 {
-   FILE *fp;
+    FILE *fp;
+    unsigned char buffer[4096];
+    size_t n;
 
-    unsigned char buffer[4096];                                     // 512 * 8
+    fp = fopen(filename, "rb");
 
-    fp = fopen("test.bin","rb");
-
-    if(fp == NULL)
-    {
-        printf("file open failed\n");
+    if (!fp) {
+        printf("Cannot open file: %s\n", filename);
         return;
     }
 
-    memset(&op,0,sizeof(op));
+    memset(&op, 0, sizeof(op));
 
-    op.paramTypes = TEEC_PARAM_TYPES(
-    						TEEC_NONE,
-    						TEEC_NONE,
-    						TEEC_NONE,
-    						TEEC_NONE
-    				);
+    res = TEEC_InvokeCommand(&sess,
+                             CMD_HASH_START,
+                             &op,
+                             &origin);
 
-    res = TEEC_InvokeCommand(&sess , CMD_HASH_START , &op , &origin);
-
-    if (res != TEEC_SUCCESS)
-    {
-    	printf("hash start failed\n");
-    	fclose(fp);
-    	return;
+    if (res != TEEC_SUCCESS) {
+        printf("HASH_START failed\n");
+        fclose(fp);
+        return;
     }
 
-    while(1)
-    {
-    	int n = fread(buffer,1,sizeof(buffer),fp);  // n has number of bytes read
+    while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
 
-    	if(n <= 0)
-    	{
-    		break;
-    	}
+        memset(&op, 0, sizeof(op));
 
-    	memset(&op,0,sizeof(op));
+        op.paramTypes = TEEC_PARAM_TYPES(
+                TEEC_MEMREF_TEMP_INPUT,
+                TEEC_NONE,
+                TEEC_NONE,
+                TEEC_NONE);
 
-    	op.paramTypes = TEEC_PARAM_TYPES(
-    						TEEC_MEMREF_TEMP_INPUT,
-    						TEEC_NONE,
-    						TEEC_NONE,
-    						TEEC_NONE
-    					);
+        op.params[0].tmpref.buffer = buffer;
+        op.params[0].tmpref.size   = n;
 
-    	op.params[0].tmpref.buffer = buffer;
-    	op.params[0].tmpref.size  = n;
+        res = TEEC_InvokeCommand(&sess,
+                                 CMD_HASH_UPDATE,
+                                 &op,
+                                 &origin);
 
-    	res = TEEC_InvokeCommand(&sess , CMD_HASH_UPDATE , &op , &origin);
-
-    	if (res != TEEC_SUCCESS)
-    	{
-    		printf("Update Failed");
-    		fclose(fp);
-    		return;
-    	}
+        if (res != TEEC_SUCCESS) {
+            printf("HASH_UPDATE failed\n");
+            fclose(fp);
+            return;
+        }
     }
 
-
-    memset(&op,0,sizeof(op));
+    memset(&op, 0, sizeof(op));
 
     op.paramTypes = TEEC_PARAM_TYPES(
-    					TEEC_MEMREF_TEMP_OUTPUT,
-    					TEEC_NONE,
-    					TEEC_NONE,
-    					TEEC_NONE
-    				);
+            TEEC_MEMREF_TEMP_OUTPUT,
+            TEEC_NONE,
+            TEEC_NONE,
+            TEEC_NONE);
 
     op.params[0].tmpref.buffer = hash;
-    op.params[0].tmpref.size   = sizeof(hash);
+    op.params[0].tmpref.size   = HASH_SIZE;
 
-    res = TEEC_InvokeCommand(&sess , CMD_HASH_CLOSE , &op , &origin);
-	if (res != TEEC_SUCCESS)
-	{
-		printf("Hash Failed");
-		fclose(fp);
-		return;
-	}
+    res = TEEC_InvokeCommand(&sess,
+                             CMD_HASH_CLOSE,
+                             &op,
+                             &origin);
 
-	fclose(fp);
+    if (res != TEEC_SUCCESS) {
+        printf("HASH_CLOSE failed\n");
+        fclose(fp);
+        return;
+    }
 
-	printf("SHA256: ");
+    fclose(fp);
 
-	for(int i=0;i<32;i++)
-	    printf("%02x",hash[i]);
+    printf("SHA256: ");
 
-	printf("\n");
-    
+    for (int i = 0; i < HASH_SIZE; i++)
+        printf("%02x", hash[i]);
+
+    printf("\n");
 }
 
-static void verifyFile()
+
+static void move_file(const char *src,
+                      const char *folder)
 {
-	uint8_t sig[256];                                              // RSA-2048 --> 2048/8 = 256
+    char dst[512];
 
-	FILE *fp;
+    const char *name = strrchr(src, '/');
 
-	fp = fopen("test.sig","rb");
+    if (name)
+        name++;
+    else
+        name = src;
 
-	if (fp == NULL)
-	{
-		printf("Signature not opened\n");
-		return;
-	}
+    snprintf(dst,
+             sizeof(dst),
+             "%s/%s",
+             folder,
+             name);
 
-	memset(&op,0,sizeof(op));
+    if (rename(src, dst) != 0)
+        printf("Failed moving %s\n", src);
+}
 
-	op.paramTypes = TEEC_PARAM_TYPES(
-					TEEC_MEMREF_TEMP_INPUT,
-					TEEC_MEMREF_TEMP_INPUT,
-					TEEC_NONE,
-					TEEC_NONE
-					);
 
-	size_t n = fread(sig,1,sizeof(sig),fp);
 
-	if (n <= 0 )
-	{
-		printf("No signature found\n");
-		fclose(fp);
-		return;
-	}
+static void verifyFile(const char *file_path,
+                       const char *sig_path)
+{
+    uint8_t sig[SIG_SIZE];
 
-	op.params[0].tmpref.buffer = hash;
-	op.params[0].tmpref.size   = sizeof(hash);
+    FILE *fp = fopen(sig_path, "rb");
 
-	op.params[1].tmpref.buffer = sig;
-	op.params[1].tmpref.size   = n;
+    if (!fp) {
+        printf("Cannot open signature: %s\n",
+               sig_path);
+        return;
+    }
 
-	res = TEEC_InvokeCommand(&sess , CMD_VERIFY_FILE , &op , &origin);
+    size_t n = fread(sig, 1, sizeof(sig), fp);
 
-	if (res != TEEC_SUCCESS)
-	{
-		printf("Not verified\n");
-		fclose(fp);
-		return;
-	}
+    fclose(fp);
 
-	printf("OK Verified\n");
-	fclose(fp);
-	return;
+    if (n == 0) {
+        printf("Signature file empty\n");
+        return;
+    }
+
+    memset(&op, 0, sizeof(op));
+
+    op.paramTypes = TEEC_PARAM_TYPES(
+            TEEC_MEMREF_TEMP_INPUT,
+            TEEC_MEMREF_TEMP_INPUT,
+            TEEC_NONE,
+            TEEC_NONE);
+
+    op.params[0].tmpref.buffer = hash;
+    op.params[0].tmpref.size   = HASH_SIZE;
+
+    op.params[1].tmpref.buffer = sig;
+    op.params[1].tmpref.size   = n;
+
+    res = TEEC_InvokeCommand(&sess,
+                             CMD_VERIFY_FILE,
+                             &op,
+                             &origin);
+
+    if (res == TEEC_SUCCESS) {
+
+        printf("Signature Verified\n");
+
+        move_file(file_path,
+                  "../approved");
+
+        move_file(sig_path,
+                  "../approved");
+    }
+    else {
+
+        printf("Signature Invalid\n");
+
+        move_file(file_path,
+                  "../rejected");
+
+        move_file(sig_path,
+                  "../rejected");
+    }
 }
 
 static void stop(void)
@@ -272,19 +298,27 @@ static void stop(void)
     printf("Back in normal world\n");
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
-    start();
-    if (res != TEEC_SUCCESS) return 1;
+    if (argc != 3) {
+        printf("Usage:\n");
+        printf("%s <file.bin> <file.sig>\n",
+               argv[0]);
+        return 1;
+    }
 
+    start();
+
+    if (res != TEEC_SUCCESS)
+        return 1;
 
     get_version();
-    echo();
-    hashTest();
-    hashFile();
 
-    verifyFile();
+    hashFile(argv[1]);
+
+    verifyFile(argv[1], argv[2]);
 
     stop();
+
     return 0;
 }

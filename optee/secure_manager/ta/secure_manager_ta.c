@@ -302,6 +302,13 @@ static TEE_Result verify (session_data *sess , uint32_t parameters_type , TEE_Pa
 		return TEE_ERROR_BAD_PARAMETERS;
 
 
+	if(sess->verify_operation != TEE_HANDLE_NULL)
+	{
+	    TEE_FreeOperation(sess->verify_operation);
+	    sess->verify_operation = TEE_HANDLE_NULL;
+	}
+
+
 	// Allocate RSA verify operation
 
 	res = TEE_AllocateOperation(
