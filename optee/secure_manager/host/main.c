@@ -274,20 +274,20 @@ static void verifyFile(const char *file_path,
         printf("Signature Verified\n");
 
         move_file(file_path,
-                  "../approved");
+                  "./approved");
 
         move_file(sig_path,
-                  "../approved");
+                  "./approved");
     }
     else {
 
         printf("Signature Invalid\n");
 
         move_file(file_path,
-                  "../rejected");
+                  "./rejected");
 
         move_file(sig_path,
-                  "../rejected");
+                  "./rejected");
     }
 }
 
