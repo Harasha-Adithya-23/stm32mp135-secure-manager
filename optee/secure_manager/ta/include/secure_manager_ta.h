@@ -12,5 +12,7 @@
 #define CMD_HASH_UPDATE 4
 #define CMD_HASH_CLOSE 5
 #define CMD_VERIFY_FILE 6
+#define CMD_STORE_KEY 7
+#define CMD_READ_KEY 8
 
 #endif

@@ -2,10 +2,10 @@
 #include <tee_internal_api.h>
 #include <tee_internal_api_extensions.h>
 
+#include<string.h>
+
 
 #include "secure_manager_ta.h"
-
-#include "public_key.h"
 
 
 
@@ -18,6 +18,17 @@ typedef struct
     TEE_ObjectHandle public_key;
 
 } session_data;
+
+
+typedef struct
+{
+    uint8_t n[256];
+    uint32_t n_size;
+
+    uint8_t e[8];
+    uint32_t e_size;
+
+} public_key_blob;
 
 
 
@@ -44,41 +55,6 @@ void TA_DestroyEntryPoint(void)
 }
 
 
-static TEE_Result load_public_key(session_data *sess)
-{
-    TEE_Result res;
-
-    TEE_Attribute attrs[2];
-
-
-    res = TEE_AllocateTransientObject(
-            TEE_TYPE_RSA_PUBLIC_KEY,
-            2048,
-            &sess->public_key);
-
-    if(res != TEE_SUCCESS)
-        return res;
-
-
-    TEE_InitRefAttribute(
-        &attrs[0],
-        TEE_ATTR_RSA_MODULUS,
-        rsa_n,
-        sizeof(rsa_n));
-
-
-    TEE_InitRefAttribute(
-        &attrs[1],
-        TEE_ATTR_RSA_PUBLIC_EXPONENT,
-        rsa_e,
-        sizeof(rsa_e));
-
-
-    return TEE_PopulateTransientObject(
-            sess->public_key,
-            attrs,
-            2);
-}
 
 TEE_Result TA_OpenSessionEntryPoint(uint32_t ptype,
                                     TEE_Param param[4],
@@ -161,6 +137,168 @@ static TEE_Result echo(uint32_t parameters_type, TEE_Param parameters[4])
     parameters[1].memref.size = size;
 
     return TEE_SUCCESS;
+}
+
+
+
+static TEE_Result store_key(uint32_t parameters_type , TEE_Param parameters[4])
+{
+
+	TEE_Result res;
+	TEE_ObjectHandle obj;
+
+	uint32_t expected = TEE_PARAM_TYPES(
+							TEE_PARAM_TYPE_MEMREF_INPUT,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE
+						);
+
+	if (parameters_type != expected)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	res = TEE_CreatePersistentObject(
+				TEE_STORAGE_PRIVATE,
+				"sender_public_key",
+				strlen("sender_public_key"),
+
+				TEE_DATA_FLAG_ACCESS_READ  |
+				TEE_DATA_FLAG_ACCESS_WRITE |
+				TEE_DATA_FLAG_ACCESS_WRITE_META |
+				TEE_DATA_FLAG_OVERWRITE,
+
+				TEE_HANDLE_NULL,
+				NULL,
+				0,
+				&obj
+			);
+
+	if(res != TEE_SUCCESS)
+		return res;
+
+	res = TEE_WriteObjectData(
+			obj,
+			parameters[0].memref.buffer,
+			parameters[0].memref.size
+		);
+
+	if(res != TEE_SUCCESS)
+		return res;
+
+	TEE_CloseObject(obj);
+
+	return res;
+	
+}
+
+static TEE_Result load_key(session_data *sess)
+{
+
+	TEE_ObjectHandle obj;
+	TEE_Result res;	
+
+	public_key_blob key;
+	uint32_t read_size;
+	
+
+	res = TEE_OpenPersistentObject( 
+						TEE_STORAGE_PRIVATE,
+						"sender_public_key",
+						strlen("sender_public_key"),
+						TEE_DATA_FLAG_ACCESS_READ,
+						&obj
+						);
+
+	if (res != TEE_SUCCESS)
+		return res;
+
+	res = TEE_ReadObjectData(
+			obj,
+			&key,
+			sizeof(key),
+			&read_size
+		  );
+
+	TEE_CloseObject(obj);
+
+	if (res != TEE_SUCCESS)
+		return res;
+
+
+	TEE_Attribute attrs[2];
+
+	res = TEE_AllocateTransientObject(
+			TEE_TYPE_RSA_PUBLIC_KEY,
+			2048,
+			&sess->public_key
+		);
+
+	if(res != TEE_SUCCESS)
+		return res;
+
+	TEE_InitRefAttribute(
+		&attrs[0],
+		TEE_ATTR_RSA_MODULUS,
+		key.n,
+		key.n_size
+	);
+
+	TEE_InitRefAttribute(
+		&attrs[1],
+		TEE_ATTR_RSA_PUBLIC_EXPONENT,
+		key.e,
+		key.e_size
+	);
+
+	return TEE_PopulateTransientObject( sess->public_key , attrs , 2);
+	
+}
+
+
+static TEE_Result read_key(uint32_t parameters_type , TEE_Param parameters[4])
+{
+	TEE_ObjectHandle obj;
+	TEE_Result res;
+
+	uint32_t expected = TEE_PARAM_TYPES(
+							TEE_PARAM_TYPE_MEMREF_OUTPUT,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE
+						);
+
+	if(parameters_type != expected)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	public_key_blob key;
+	uint32_t read_size;
+
+	res = TEE_OpenPersistentObject(
+			TEE_STORAGE_PRIVATE,
+			"sender_public_key",
+			strlen("sender_public_key"),
+			TEE_DATA_FLAG_ACCESS_READ,
+			&obj
+			);
+
+	if(res != TEE_SUCCESS)
+		return res;
+
+	res = TEE_ReadObjectData( obj , &key , sizeof(key) , &read_size);
+
+	TEE_CloseObject(obj);
+
+	if(res != TEE_SUCCESS)
+		return res;
+
+	if(parameters[0].memref.size < sizeof(key))
+		return TEE_ERROR_SHORT_BUFFER;
+
+	TEE_MemMove(parameters[0].memref.buffer , &key , sizeof(key) );
+
+	parameters[0].memref.size = sizeof(key);
+
+	return TEE_SUCCESS;
 }
 
 static TEE_Result hash(uint32_t parameters_type , TEE_Param parameters[4])
@@ -323,7 +461,7 @@ static TEE_Result verify (session_data *sess , uint32_t parameters_type , TEE_Pa
 		return res;
 	}
 
-	res = load_public_key(sess);
+	res = load_key(sess);
 
 	if(res != TEE_SUCCESS)
 	    return res;
@@ -394,6 +532,12 @@ TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
 
     	case CMD_VERIFY_FILE:
     		return verify(sess , parameters_type , parameters);
+
+    	case CMD_STORE_KEY:
+    		return store_key(parameters_type , parameters);
+
+    	case CMD_READ_KEY:
+    		return read_key(parameters_type , parameters);
 
 
 

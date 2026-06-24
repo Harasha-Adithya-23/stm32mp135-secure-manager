@@ -3,6 +3,18 @@
 #include <stdlib.h>
 #include <tee_client_api.h>
 #include "../ta/include/secure_manager_ta.h"
+#include "../ta/include/public_key.h"
+
+typedef struct
+{
+    uint8_t n[256];
+    uint32_t n_size;
+
+    uint8_t e[8];
+    uint32_t e_size;
+
+} public_key_blob;
+
 
 static TEEC_Context ctx;         //connection to optee
 static TEEC_Session sess;        // connection to ta
@@ -118,6 +130,60 @@ static void hashTest(void)
 
     
         	
+}
+
+static void storeKey()
+{
+	memset(&op , 0 , sizeof(op));
+
+	op.paramTypes = TEEC_PARAM_TYPES(
+						TEEC_MEMREF_TEMP_INPUT,
+						TEEC_NONE,
+						TEEC_NONE,
+						TEEC_NONE
+					);
+
+	public_key_blob key;
+
+	memset(&key , 0 , sizeof(key));
+
+	memcpy(key.n , rsa_n , sizeof(rsa_n));
+	key.n_size = RSA_N_SIZE;
+
+	memcpy(key.e , rsa_e , sizeof(rsa_e));
+	key.e_size = RSA_E_SIZE;
+
+	op.params[0].tmpref.buffer = &key;
+	op.params[0].tmpref.size = sizeof(key);
+
+	
+	res = TEEC_InvokeCommand(&sess , CMD_STORE_KEY , &op , &origin);
+	if (res != TEEC_SUCCESS)
+	{
+		printf("Public Key store failed 0x%x\n",res);
+		return;
+	}
+
+	printf("Public Key stored in secured storage");
+}
+
+static void readKey()
+{
+	public_key_blob key;
+
+	memset(&op , 0 , sizeof(op));
+
+	op.paramTypes = TEEC_PARAM_TYPES( TEEC_MEMREF_TEMP_OUTPUT , TEEC_NONE , TEEC_NONE , TEEC_NONE);
+
+	op.params[0].tmpref.buffer = &key;
+	op.params[0].tmpref.size = sizeof(key);
+
+	res = TEEC_InvokeCommand(&sess , CMD_READ_KEY , &op , &origin);
+
+	if(res==TEEC_SUCCESS)
+	    printf("Read key from secure storage OK\n");
+	else
+	    printf("Read failed 0x%x\n",res);
 }
 
 static void hashFile(const char *filename)
@@ -291,6 +357,9 @@ static void verifyFile(const char *file_path,
     }
 }
 
+
+
+
 static void stop(void)
 {
     TEEC_CloseSession(&sess);
@@ -300,23 +369,29 @@ static void stop(void)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3) {
+   if (argc != 3) {
         printf("Usage:\n");
         printf("%s <file.bin> <file.sig>\n",
                argv[0]);
         return 1;
     }
+    
 
     start();
 
     if (res != TEEC_SUCCESS)
         return 1;
 
+	storeKey();
+	readKey();
+
+	
     get_version();
 
     hashFile(argv[1]);
 
     verifyFile(argv[1], argv[2]);
+
 
     stop();
 
