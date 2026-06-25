@@ -14,5 +14,8 @@
 #define CMD_VERIFY_FILE 6
 #define CMD_STORE_KEY 7
 #define CMD_READ_KEY 8
+#define CMD_GET_FW_VERSION 9
+#define CMD_SET_FW_VERSION 10
+#define CMD_CHECK_ROLLBACK 11
 
 #endif

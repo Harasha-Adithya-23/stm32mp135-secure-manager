@@ -89,6 +89,27 @@ static void getFirmwareVersion(void)
            op.params[0].value.a);
 }
 
+
+static int checkRollback(uint32_t version)
+{
+	memset(&op , 0 , sizeof(op));
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT , TEEC_NONE , TEEC_NONE , TEEC_NONE);
+
+	op.params[0].value.a = version;
+
+	res = TEEC_InvokeCommand(&sess , CMD_CHECK_ROLLBACK , &op , &origin);
+
+	if(res == TEEC_SUCCESS)
+	{
+	    printf("Rollback Check Passed\n");
+	    return 1;
+	}
+
+	printf("Rollback Detected\n");
+	return 0;
+}
+
 static void writeAuditLog(const	char *file , const char *sender , int version , const char *result)
 {
 	FILE *log;
@@ -381,35 +402,56 @@ static void verifyFile(const char *file_path,
     op.params[1].tmpref.buffer = sig;
     op.params[1].tmpref.size   = n;
 
+    uint32_t version = 4;
+
+
+
     res = TEEC_InvokeCommand(&sess,
                              CMD_VERIFY_FILE,
                              &op,
                              &origin);
 
-    if (res == TEEC_SUCCESS) {
+	if (res == TEEC_SUCCESS)
+	{
+	    if(checkRollback(version) == 0)
+	    {
+	        printf("Rollback detected\n");
 
-        printf("Signature Verified\n");
+	        move_file(file_path, "./rejected");
+	        move_file(sig_path, "./rejected");
 
-        move_file(file_path,
-                  "./approved");
+	        writeAuditLog(file_path,
+	                      "default_sender",
+	                      version,
+	                      "ROLLBACK");
 
-        move_file(sig_path,
-                  "./approved");
+	        return;
+	    }
 
-        writeAuditLog(file_path , "default_sender" , 1 , "APPROVED");
-    }
-    else {
+	    setFirmwareVersion(version);
 
-        printf("Signature Invalid\n");
+	    printf("Signature Verified\n");
 
-        move_file(file_path,
-                  "./rejected");
+	    move_file(file_path, "./approved");
+	    move_file(sig_path, "./approved");
 
-        move_file(sig_path,
-                  "./rejected");
+	    writeAuditLog(file_path,
+	                  "default_sender",
+	                  version,
+	                  "APPROVED");
+	}
+	else
+	{
+	    printf("Signature Invalid\n");
 
-        writeAuditLog(file_path , "default_sender" , 1 , "REJECTED");
-    }
+	    move_file(file_path, "./rejected");
+	    move_file(sig_path, "./rejected");
+
+	    writeAuditLog(file_path,
+	                  "default_sender",
+	                  version,
+	                  "INVALID_SIGNATURE");
+	}
 }
 
 
@@ -424,14 +466,14 @@ static void stop(void)
 
 int main(int argc, char *argv[])
 {
-  /* if (argc != 3) {
+   if (argc != 3) {
         printf("Usage:\n");
         printf("%s <file.bin> <file.sig>\n",
                argv[0]);
         return 1;
     }
     
-*/
+
     start();
 
     if(res != TEEC_SUCCESS){
@@ -442,11 +484,11 @@ int main(int argc, char *argv[])
 	readKey();
 
 	//setFirmwareVersion(3);
-	getFirmwareVersion();
 
-    //hashFile(argv[1]);
 
-    //verifyFile(argv[1], argv[2]);
+    hashFile(argv[1]);
+
+    verifyFile(argv[1], argv[2]);
 
 
     stop();

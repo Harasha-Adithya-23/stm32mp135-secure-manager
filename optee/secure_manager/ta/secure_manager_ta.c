@@ -31,6 +31,7 @@ typedef struct
 } public_key_blob;
 
 
+static const char version_id[] = "fw_version";
 
 
 /*
@@ -100,20 +101,118 @@ void TA_CloseSessionEntryPoint(void *sess_ptr)
     TEE_Free(sess);
 }
 
-
-static TEE_Result get_version(uint32_t parameters_type,TEE_Param parameters[4])
+static TEE_Result write_version(uint32_t version)
 {
-	uint32_t expected = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_OUTPUT,TEE_PARAM_TYPE_NONE,TEE_PARAM_TYPE_NONE,TEE_PARAM_TYPE_NONE);
+	TEE_ObjectHandle obj;
+	TEE_Result res;
+
+		res = TEE_CreatePersistentObject(TEE_STORAGE_PRIVATE , version_id , sizeof(version_id) , 
+										 TEE_DATA_FLAG_ACCESS_READ |
+										 TEE_DATA_FLAG_ACCESS_WRITE |
+										 TEE_DATA_FLAG_ACCESS_WRITE_META |
+										 TEE_DATA_FLAG_OVERWRITE,             // overwritable readable , writeable
+										 TEE_HANDLE_NULL,
+										 NULL,
+										 0,
+										 &obj	
+										);
+
+		if(res != TEE_SUCCESS)
+		{
+			return res;
+		}
+
+		res = TEE_WriteObjectData(obj , &version , sizeof(version));
+
+		TEE_CloseObject(obj);
+
+		return res;
+}
+
+static TEE_Result read_version(uint32_t *version)
+{
+	TEE_ObjectHandle obj;
+	TEE_Result res;
+	uint32_t count;
+
+	res = TEE_OpenPersistentObject(TEE_STORAGE_PRIVATE , version_id , sizeof(version_id) , TEE_DATA_FLAG_ACCESS_READ , &obj);
+
+	if(res != TEE_SUCCESS)
+		return res;
+
+	res = TEE_ReadObjectData(obj , version , sizeof(uint32_t) , &count);
+
+	TEE_CloseObject(obj);
+
+	return res;
+}
+
+static TEE_Result get_version(uint32_t parameters_type , TEE_Param parameters[4])
+{
+	uint32_t expected = TEE_PARAM_TYPES(
+							TEE_PARAM_TYPE_VALUE_OUTPUT,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE
+						);
 
 	if(parameters_type != expected)
-	{
 		return TEE_ERROR_BAD_PARAMETERS;
-	}
 
-	parameters[0].value.a = 1;
+	uint32_t version = 0;
+
+	if(read_version(&version) != TEE_SUCCESS)
+		version = 0;
+
+	parameters[0].value.a = version;
 
 	return TEE_SUCCESS;
 }
+
+static TEE_Result set_version(uint32_t parameters_type , TEE_Param parameters[4])
+{
+	uint32_t expected = TEE_PARAM_TYPES(
+							TEE_PARAM_TYPE_VALUE_INPUT,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE
+						);
+
+	if(parameters_type != expected)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	return write_version(parameters[0].value.a);
+}
+
+
+static TEE_Result rollback(uint32_t parameters_type , TEE_Param parameters[4])
+{
+	uint32_t expected = TEE_PARAM_TYPES(
+							TEE_PARAM_TYPE_VALUE_INPUT,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE,
+							TEE_PARAM_TYPE_NONE
+						);
+
+	if(parameters_type != expected)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	uint32_t file_ver = parameters[0].value.a;
+
+	uint32_t stored_ver = 0;
+
+	TEE_Result res = read_version(&stored_ver);
+
+	if(res != TEE_SUCCESS)
+		return res;
+
+	if(file_ver <= stored_ver)
+		return TEE_ERROR_ACCESS_DENIED;
+
+	return TEE_SUCCESS;
+}
+
+
 
 static TEE_Result echo(uint32_t parameters_type, TEE_Param parameters[4])
 {
@@ -538,6 +637,15 @@ TEE_Result TA_InvokeCommandEntryPoint(void *session_id,
 
     	case CMD_READ_KEY:
     		return read_key(parameters_type , parameters);
+
+    	case CMD_GET_FW_VERSION:
+    		return get_version(parameters_type , parameters);
+
+    	case CMD_SET_FW_VERSION:
+    		return set_version(parameters_type , parameters);
+
+    	case CMD_CHECK_ROLLBACK:
+    		return rollback(parameters_type , parameters);
 
 
 
