@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include<time.h>
 #include <tee_client_api.h>
 #include "../ta/include/secure_manager_ta.h"
 #include "../ta/include/public_key.h"
@@ -48,19 +49,69 @@ static void start(void)
     printf("Entered secure world — session open\n");
 }
 
-static void get_version(void)
+static void setFirmwareVersion(uint32_t version)
 {
-    memset(&op, 0, sizeof(op));
-    op.paramTypes = TEEC_PARAM_TYPES(
-        TEEC_VALUE_OUTPUT, TEEC_NONE, TEEC_NONE, TEEC_NONE);
+	memset(&op , 0 , sizeof(op));
 
-    res = TEEC_InvokeCommand(&sess, CMD_GET_VERSION, &op, &origin);
-    if (res != TEEC_SUCCESS) {
-        printf("get_version failed: 0x%x origin: 0x%x\n", res, origin);
-        return;
-    }
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT , TEEC_NONE , TEEC_NONE , TEEC_NONE);
 
-    printf("Secure Manager version = %u\n", op.params[0].value.a);
+	op.params[0].value.a = version;
+
+	res = TEEC_InvokeCommand(&sess , CMD_SET_FW_VERSION , &op , &origin);
+
+	if(res != TEEC_SUCCESS)
+	{
+	    printf("Version set failed 0x%x origin=0x%x\n",
+	           res,
+	           origin);
+	    return;
+	}
+
+	printf("Firmware version set to %u\n", version);
+}
+
+static void getFirmwareVersion(void)
+{
+	memset(&op , 0 , sizeof(op));
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_OUTPUT , TEEC_NONE , TEEC_NONE , TEEC_NONE);
+	res = TEEC_InvokeCommand(&sess , CMD_GET_FW_VERSION , &op , &origin);	
+
+	if(res != TEEC_SUCCESS)
+	{
+	    printf("Version get failed 0x%x origin=0x%x\n",
+	           res,
+	           origin);
+	    return;
+	}
+		
+    printf("Current firmware version = %u\n",
+           op.params[0].value.a);
+}
+
+static void writeAuditLog(const	char *file , const char *sender , int version , const char *result)
+{
+	FILE *log;
+
+	char timebuf[64];
+
+	time_t now = time(NULL);
+
+	struct tm *t =  localtime(&now);
+
+	strftime( timebuf , sizeof(timebuf) , "%Y-%m-%d %H:%M:%S",t);
+
+	log =  fopen("/var/log/secure_manager.log" , "a");
+
+	if (log == NULL)
+	{
+		printf("Cannot open log\n");
+		return;
+	}
+
+	fprintf( log , "[%s] FILE = %s SENDER = %s VERSION = %d RESULT = %s\n" , timebuf , file , sender , version , result);
+	fclose(log);
+	
 }
 
 static void echo(void)
@@ -344,6 +395,8 @@ static void verifyFile(const char *file_path,
 
         move_file(sig_path,
                   "./approved");
+
+        writeAuditLog(file_path , "default_sender" , 1 , "APPROVED");
     }
     else {
 
@@ -354,6 +407,8 @@ static void verifyFile(const char *file_path,
 
         move_file(sig_path,
                   "./rejected");
+
+        writeAuditLog(file_path , "default_sender" , 1 , "REJECTED");
     }
 }
 
@@ -369,28 +424,29 @@ static void stop(void)
 
 int main(int argc, char *argv[])
 {
-   if (argc != 3) {
+  /* if (argc != 3) {
         printf("Usage:\n");
         printf("%s <file.bin> <file.sig>\n",
                argv[0]);
         return 1;
     }
     
-
+*/
     start();
 
-    if (res != TEEC_SUCCESS)
-        return 1;
+    if(res != TEEC_SUCCESS){
+        return 1;    	
+    }
 
 	storeKey();
 	readKey();
 
-	
-    get_version();
+	//setFirmwareVersion(3);
+	getFirmwareVersion();
 
-    hashFile(argv[1]);
+    //hashFile(argv[1]);
 
-    verifyFile(argv[1], argv[2]);
+    //verifyFile(argv[1], argv[2]);
 
 
     stop();
